@@ -28,7 +28,7 @@ class DockerfileParser():
             self._populate_env(args)
 
         elif cmd in ("host", "run"):
-            self.build_commands.append((cmd, sha256(args.encode()).hexdigest(), args))
+            self.build_commands.append((cmd, args))
 
         elif cmd == "from":
             self.from_image = args
@@ -105,12 +105,15 @@ def build(args):
         print("Nothing to do")
         return
 
+    build_hash = sha256()
     if df.from_image == "scratch":
         parrent_hash = ""
     else:
         raise NotImplemented("Can't yet locate parrent_hash")
 
-    for cmd, args_hash, cmdargs in df.build_commands:
+    for cmd, cmdargs in df.build_commands:
+        build_hash.update(cmdargs.encode())
+        args_hash = build_hash.hexdigest()
         print(f"==> Building {args_hash[:16]}")
 
         target = runtime / (args_hash+"-init")
