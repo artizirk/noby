@@ -68,16 +68,25 @@ class DockerfileParser():
 
 
 def btrfs_subvol_create(path):
-    subprocess.run(("btrfs", "subvolume", "create", path), check=True)
+    subprocess.run(("btrfs", "subvolume", "create", path),
+        check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 def btrfs_subvol_delete(path):
-    subprocess.run(("btrfs", "subvolume", "delete", path), check=True)
+    subprocess.run(("btrfs", "subvolume", "delete", path),
+        check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 def btrfs_subvol_snapshot(src, dest, *, readonly=False):
+    cmd = ("btrfs", "subvolume", "snapshot", src, dest)
     if readonly:
-        subprocess.run(("btrfs", "subvolume", "snapshot", "-r", src, dest), check=True)
-    else:
-        subprocess.run(("btrfs", "subvolume", "snapshot", src, dest), check=True)
+        cmd = ("btrfs", "subvolume", "snapshot", "-r", src, dest)
+    subprocess.run(("btrfs", "subvolume", "snapshot", src, dest),
+        check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 
 def build(args):
@@ -153,7 +162,7 @@ def build(args):
                 pass
         os.setxattr(target, f"user.cmd.{cmd}".encode(), cmdargs.encode())
         btrfs_subvol_snapshot(target, final_target, readonly=True)
-        btrfs_subvol_delete(targtet)
+        btrfs_subvol_delete(target)
         parrent_hash = args_hash
 
 
