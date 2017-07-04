@@ -107,9 +107,9 @@ def build(args):
 
     build_hash = sha256()
     if df.from_image == "scratch":
-        parrent_hash = ""
+        parent_hash = ""
     else:
-        raise NotImplemented("Can't yet locate parrent_hash")
+        raise NotImplemented("Can't yet locate parent_hash")
 
     for cmd, cmdargs in df.build_commands:
         build_hash.update(cmdargs.encode())
@@ -124,27 +124,27 @@ def build(args):
         }
         host_env.update(df.env)
 
-        ## Parrent image checks
+        ## parent image checks
         if final_target.exists():
-            previous_parrent_hash = ""
+            previous_parent_hash = ""
             try:
-                previous_parrent_hash = os.getxattr(final_target, b"user.parrent_hash").decode()
+                previous_parent_hash = os.getxattr(final_target, b"user.parent_hash").decode()
             except:
                 pass
-            if parrent_hash and parrent_hash != previous_parrent_hash:
-                print("  -> Parrent image hash changed")
+            if parent_hash and parent_hash != previous_parent_hash:
+                print("  -> parent image hash changed")
                 btrfs_subvol_delete(final_target)
             else:
                 print("  -> Using cached image")
-                parrent_hash = args_hash
+                parent_hash = args_hash
                 continue
 
         if target.exists():
             print("  -> Deleting incomplete image")
             btrfs_subvol_delete(target)
 
-        if parrent_hash:
-            btrfs_subvol_snapshot(runtime / parrent_hash, target)
+        if parent_hash:
+            btrfs_subvol_snapshot(runtime / parent_hash, target)
         else:
             btrfs_subvol_create(target)
 
@@ -157,7 +157,7 @@ def build(args):
             subprocess.run(['systemd-nspawn', '-D', target, '/bin/sh', '-c', cmdargs], cwd=target, check=True, shell=False, env=df.env)
 
         ## Seal build image
-        os.setxattr(target, b"user.parrent_hash", parrent_hash.encode())
+        os.setxattr(target, b"user.parent_hash", parent_hash.encode())
         for attr in ("user.cmd.host", "user.cmd.run"):
             try:
                 os.removexattr(target, attr.encode())
@@ -166,7 +166,7 @@ def build(args):
         os.setxattr(target, f"user.cmd.{cmd}".encode(), cmdargs.encode())
         btrfs_subvol_snapshot(target, final_target, readonly=True)
         btrfs_subvol_delete(target)
-        parrent_hash = args_hash
+        parent_hash = args_hash
 
 
 def parseargs():
