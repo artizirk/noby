@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import os
 import argparse
+import subprocess
 from hashlib import sha256
 from pathlib import Path
 from pprint import pprint
-from subprocess import run
+
 
 class DockerfileParser():
 
@@ -66,6 +67,19 @@ class DockerfileParser():
                 current_line = []
 
 
+def btrfs_subvol_create(path):
+    subprocess.run(("btrfs", "subvolume", "create", path), check=True)
+
+def btrfs_subvol_delete(path):
+    subprocess.run(("btrfs", "subvolume", "delete", path), check=True)
+
+def btrfs_subvol_snapshot(src, dest, *, readonly=False):
+    if readonly:
+        subprocess.run(("btrfs", "subvolume", "snapshot", "-r", src, dest), check=True)
+    else:
+        subprocess.run(("btrfs", "subvolume", "snapshot", src, dest), check=True)
+
+
 def build(args):
     context = Path(args.path).resolve()
     dockerfile = Path(args.file)
@@ -92,30 +106,45 @@ def build(args):
 
         target = runtime / (args_hash+"-init")
         final_target = runtime / args_hash
-        host_env = {"TARGET": target}
+        host_env = {
+            "TARGET": target,
+            "CONTEXT": context
+        }
         host_env.update(df.env)
 
+        ## Parrent image checks
         if final_target.exists():
-            print("  -> Using cached image")
-            parrent_hash = args_hash
-            continue
+            previous_parrent_hash = ""
+            try:
+                previous_parrent_hash = os.getxattr(final_target, b"user.parrent_hash").decode()
+            except:
+                pass
+            if parrent_hash and parrent_hash != previous_parrent_hash:
+                print("  -> Parrent image hash changed")
+                btrfs_subvol_delete(final_target)
+            else:
+                print("  -> Using cached image")
+                parrent_hash = args_hash
+                continue
 
         if target.exists():
             print("  -> Deleting incomplete image")
-            run(("btrfs", "subvolume", "delete", target), check=True)
+            btrfs_subvol_delete(target)
 
         if parrent_hash:
-            run(("btrfs", "subvolume", "snapshot", runtime / parrent_hash, target), check=True)
+            btrfs_subvol_snapshot(runtime / parrent_hash, target)
         else:
-            run(("btrfs", "subvolume", "create", target), check=True)
+            btrfs_subvol_create(target)
 
+        ## Run build step
         if cmd == "host":
             print(f"  -> Running on host \"{cmdargs}\"")
-            run(cmdargs, cwd=target, check=True, shell=True, env=host_env)
+            subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
         elif cmd == "run":
             print(f"  -> Running in container \"{cmdargs}\"")
-            run(['systemd-nspawn', '-D', target, '/bin/sh', '-c', cmdargs], cwd=target, check=True, shell=False, env=df.env)
+            subprocess.run(['systemd-nspawn', '-D', target, '/bin/sh', '-c', cmdargs], cwd=target, check=True, shell=False, env=df.env)
 
+        ## Seal build image
         os.setxattr(target, b"user.parrent_hash", parrent_hash.encode())
         for attr in ("user.cmd.host", "user.cmd.run"):
             try:
@@ -123,8 +152,8 @@ def build(args):
             except:
                 pass
         os.setxattr(target, f"user.cmd.{cmd}".encode(), cmdargs.encode())
-        run(("btrfs", "subvolume", "snapshot", "-r", target, final_target), check=True)
-        run(("btrfs", "subvolume", "delete", target), check=True)
+        btrfs_subvol_snapshot(target, final_target, readonly=True)
+        btrfs_subvol_delete(targtet)
         parrent_hash = args_hash
 
 
