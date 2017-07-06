@@ -1,0 +1,5 @@
+FROM test
+
+HOST echo "im from test"
+HOST ls -lah $TARGET
+HOST cat $TARGET/test

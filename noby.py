@@ -2,6 +2,7 @@
 import os
 import argparse
 import subprocess
+import distutils.util
 from hashlib import sha256
 from pathlib import Path
 from pprint import pprint
@@ -66,6 +67,63 @@ class DockerfileParser():
                 yield "\n".join(current_line)
                 current_line = []
 
+class ImageStorage():
+
+    def __init__(self, runtime):
+        self.runtime = Path(runtime)
+        if not self.runtime.exists():
+            raise FileNotFoundError(f"Runtime dir {self.runtime} does not exist")
+
+        self.images = {}
+        self._scan()
+
+    def _scan(self):
+        for image in self.runtime.iterdir():
+            name = image.name
+            self.images[name] = attrs = {}
+
+
+            for attr in os.listxattr(image):
+                if not attr.startswith("user."):
+                    continue
+                val = os.getxattr(image, attr)
+                val = val.decode()
+                key = attr[5:]
+                attrs[key] = val
+
+    def find_children(self, parent_hash):
+        for image, attrs in self.images.items():
+            if attrs.get("parent_hash") == parent_hash:
+                yield image
+
+    def find_by_name(self, name):
+        for image, attrs in self.images.items():
+            if attrs.get("name") == name:
+                yield image
+
+    def find_last_build_by_name(self, name):
+        image_hash = list(self.find_by_name(name))
+        if not image_hash:
+            return None
+        image_hash = image_hash[0]
+
+        last_hash = image_hash
+        hash_tree = []
+        while True:
+            childs = list(self.find_children(last_hash))
+            if not childs:
+                break
+            for child in childs:
+                hash_tree.append(child)
+                last_hash = child
+
+        if not hash_tree:
+            return last_hash
+
+        for image_hash in hash_tree[::-1]:
+            if not image_hash.endswith("-init"):
+                return image_hash
+
 
 def btrfs_subvol_create(path):
     subprocess.run(("btrfs", "subvolume", "create", path),
@@ -85,7 +143,7 @@ def btrfs_subvol_snapshot(src, dest, *, readonly=False):
         cmd = ("btrfs", "subvolume", "snapshot", "-r", src, dest)
     subprocess.run(("btrfs", "subvolume", "snapshot", src, dest),
         check=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        #stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
 
@@ -100,6 +158,8 @@ def build(args):
 
     runtime = Path(args.runtime).resolve()
 
+    r = ImageStorage(runtime)
+
     df = DockerfileParser(dockerfile)
     if not df.build_commands:
         print("Nothing to do")
@@ -109,12 +169,28 @@ def build(args):
     if df.from_image == "scratch":
         parent_hash = ""
     else:
-        raise NotImplemented("Can't yet locate parent_hash")
+        parent_hash = r.find_last_build_by_name(df.from_image)
+        if not parent_hash:
+            raise FileNotFoundError(f"Image with name {df.from_image} not found")
 
-    for cmd, cmdargs in df.build_commands:
+    total_build_steps = len(df.build_commands)
+    build_hashes = []
+
+    if not args.no_cache:
+        full_build_hash = sha256()
+        for cmd, cmdargs in df.build_commands:
+            full_build_hash.update(cmdargs.encode())
+
+        if (runtime / full_build_hash.hexdigest()).exists():
+            print(f"==> Already built {full_build_hash.hexdigest()[:16]}")
+            return
+
+    for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
+        current_build_step += 1
         build_hash.update(cmdargs.encode())
         args_hash = build_hash.hexdigest()
-        print(f"==> Building {args_hash[:16]}")
+        build_hashes.append(args_hash)
+        print(f"==> Building step {current_build_step}/{total_build_steps} {args_hash[:16]}")
 
         target = runtime / (args_hash+"-init")
         final_target = runtime / args_hash
@@ -126,18 +202,21 @@ def build(args):
 
         ## parent image checks
         if final_target.exists():
-            previous_parent_hash = ""
-            try:
-                previous_parent_hash = os.getxattr(final_target, b"user.parent_hash").decode()
-            except:
-                pass
-            if parent_hash and parent_hash != previous_parent_hash:
-                print("  -> parent image hash changed")
+            if args.no_cache:
                 btrfs_subvol_delete(final_target)
             else:
-                print("  -> Using cached image")
-                parent_hash = args_hash
-                continue
+                previous_parent_hash = ""
+                try:
+                    previous_parent_hash = os.getxattr(final_target, b"user.parent_hash").decode()
+                except:
+                    pass
+                if parent_hash and parent_hash != previous_parent_hash:
+                    print("  -> parent image hash changed")
+                    btrfs_subvol_delete(final_target)
+                else:
+                    print("  -> Using cached image")
+                    parent_hash = args_hash
+                    continue
 
         if target.exists():
             print("  -> Deleting incomplete image")
@@ -150,10 +229,10 @@ def build(args):
 
         ## Run build step
         if cmd == "host":
-            print(f"  -> Running on host \"{cmdargs}\"")
+            print(f'  -> HOST {cmdargs}')
             subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
         elif cmd == "run":
-            print(f"  -> Running in container \"{cmdargs}\"")
+            print(f'  -> RUN {cmdargs}')
             nspawn_cmd = ['systemd-nspawn', '--quiet']
             for key, val in df.env.items():
                 nspawn_cmd.extend(('--setenv',f'{key}={val}'))
@@ -168,9 +247,27 @@ def build(args):
             except:
                 pass
         os.setxattr(target, f"user.cmd.{cmd}".encode(), cmdargs.encode())
+
+        if args.tag:
+            os.setxattr(target, b"user.name", args.tag.encode())
+
         btrfs_subvol_snapshot(target, final_target, readonly=True)
         btrfs_subvol_delete(target)
         parent_hash = args_hash
+
+    if args.rm:
+        print("==> Cleanup")
+        for build_hash in build_hashes[:-1]:
+            target = runtime / build_hash
+            if target.exists():
+                print(f"  -> Remove intermediate image {build_hash[:16]}")
+                btrfs_subvol_delete(target)
+
+    print(f"==> Successfully built {parent_hash[:16]}")
+
+
+def strtobool(x):
+    return bool(distutils.util.strtobool(x))
 
 
 def parseargs():
@@ -192,6 +289,18 @@ def parseargs():
     build_parser.add_argument('--tag', '-t',
         action='store',
         help="Name and optionally a tag in the 'name:tag' format")
+    build_parser.add_argument('--no-cache',
+        action='store',
+        default=False,
+        type=strtobool,
+        metavar='{true, false}',
+        help="Do not use cached images (Default false)")
+    build_parser.add_argument('--rm',
+        action='store',
+        default=True,
+        type=strtobool,
+        metavar='{true, false}',
+        help="Remove intermediate images (Default true)")
     build_parser.add_argument('path',
         action='store',
         metavar='PATH',
