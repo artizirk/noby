@@ -154,7 +154,11 @@ def build(args):
             subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
         elif cmd == "run":
             print(f"  -> Running in container \"{cmdargs}\"")
-            subprocess.run(['systemd-nspawn', '-D', target, '/bin/sh', '-c', cmdargs], cwd=target, check=True, shell=False, env=df.env)
+            nspawn_cmd = ['systemd-nspawn', '--quiet']
+            for key, val in df.env.items():
+                nspawn_cmd.extend(('--setenv',f'{key}={val}'))
+            nspawn_cmd.extend(('-D', target, '/bin/sh', '-c', cmdargs))
+            subprocess.run(nspawn_cmd, cwd=target, check=True, shell=False, env=df.env)
 
         ## Seal build image
         os.setxattr(target, b"user.parent_hash", parent_hash.encode())
