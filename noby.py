@@ -102,10 +102,18 @@ class ImageStorage():
                 yield image
 
     def find_last_build_by_name(self, name):
-        image_hash = list(self.find_by_name(name))
+        image_hashes = list(self.find_by_name(name))
+        if not image_hashes:
+            return None
+
+        image_hash = None
+        for h in image_hashes:
+            if h.endswith("-init"):
+                continue
+            image_hash = h
+
         if not image_hash:
             return None
-        image_hash = image_hash[0]
 
         last_hash = image_hash
         hash_tree = []
@@ -250,6 +258,11 @@ def build(args):
 
         if args.tag:
             os.setxattr(target, b"user.name", args.tag.encode())
+        else:
+            try:
+                os.removexattr(target, b"user.name")
+            except:
+                pass
 
         btrfs_subvol_snapshot(target, final_target, readonly=True)
         btrfs_subvol_delete(target)
