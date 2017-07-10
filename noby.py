@@ -151,7 +151,7 @@ def btrfs_subvol_snapshot(src, dest, *, readonly=False):
         cmd = ("btrfs", "subvolume", "snapshot", "-r", src, dest)
     subprocess.run(("btrfs", "subvolume", "snapshot", src, dest),
         check=True,
-        #stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
 
