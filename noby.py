@@ -94,12 +94,12 @@ class ImageStorage():
     def find_children(self, parent_hash):
         for image, attrs in self.images.items():
             if attrs.get("parent_hash") == parent_hash:
-                yield image
+                yield image, attrs
 
     def find_by_name(self, name):
         for image, attrs in self.images.items():
             if attrs.get("name") == name:
-                yield image
+                yield image, attrs
 
     def find_last_build_by_name(self, name):
         image_hashes = list(self.find_by_name(name))
@@ -107,7 +107,7 @@ class ImageStorage():
             return None
 
         image_hash = None
-        for h in image_hashes:
+        for h, a in image_hashes:
             if h.endswith("-init"):
                 continue
             image_hash = h
@@ -115,22 +115,7 @@ class ImageStorage():
         if not image_hash:
             return None
 
-        last_hash = image_hash
-        hash_tree = []
-        while True:
-            childs = list(self.find_children(last_hash))
-            if not childs:
-                break
-            for child in childs:
-                hash_tree.append(child)
-                last_hash = child
-
-        if not hash_tree:
-            return last_hash
-
-        for image_hash in hash_tree[::-1]:
-            if not image_hash.endswith("-init"):
-                return image_hash
+        return image_hash
 
 
 def btrfs_subvol_create(path):
@@ -180,6 +165,7 @@ def build(args):
         parent_hash = r.find_last_build_by_name(df.from_image)
         if not parent_hash:
             raise FileNotFoundError(f"Image with name {df.from_image} not found")
+        print(f"Using parent image {parent_hash[:16]}")
 
     total_build_steps = len(df.build_commands)
     build_hashes = []
@@ -232,6 +218,10 @@ def build(args):
 
         if parent_hash:
             btrfs_subvol_snapshot(runtime / parent_hash, target)
+            try:
+                os.removexattr(target, b"user.name")
+            except:
+                pass
         else:
             btrfs_subvol_create(target)
 
