@@ -278,7 +278,7 @@ def parseargs():
     parser.add_argument(
         '--runtime', action='store',
         help='Directory where runtime files are stored. (Default /var/lib/noby)',
-        default='/var/lib/noby')
+        default=os.environ.get('NOBY_RUNTIME','/var/lib/noby'))
     subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', help='commands')
     subparsers.required = True
 
