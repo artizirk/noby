@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import shlex
+import shutil
 import argparse
 import subprocess
 import distutils.util
@@ -28,7 +30,7 @@ class DockerfileParser():
         if cmd == "env":
             self._populate_env(args)
 
-        elif cmd in ("host", "run"):
+        elif cmd in ("host", "run", "copy"):
             self.build_commands.append((cmd, args))
 
         elif cmd == "from":
@@ -134,10 +136,21 @@ def btrfs_subvol_snapshot(src, dest, *, readonly=False):
     cmd = ("btrfs", "subvolume", "snapshot", src, dest)
     if readonly:
         cmd = ("btrfs", "subvolume", "snapshot", "-r", src, dest)
-    subprocess.run(("btrfs", "subvolume", "snapshot", src, dest),
+    subprocess.run(cmd,
         check=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
+
+def newest_file(context, cmdargs):
+    *srcs, dest = shlex.split(cmdargs)
+    mtime = 0
+    for src in srcs:
+        src = context / src
+        for file in src.glob('**/*'):
+            fmtime = file.stat().st_mtime
+            if fmtime > mtime:
+                mtime = fmtime
+    return mtime
 
 
 def build(args):
@@ -181,7 +194,11 @@ def build(args):
 
     for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
         current_build_step += 1
+        build_hash.update(cmd.encode())
         build_hash.update(cmdargs.encode())
+        if cmd == "copy":
+            mtime = newest_file(context, cmdargs)
+            build_hash.update(int(mtime).to_bytes(4, 'big'))
         args_hash = build_hash.hexdigest()
         build_hashes.append(args_hash)
         print(f"==> Building step {current_build_step}/{total_build_steps} {args_hash[:16]}")
@@ -229,6 +246,7 @@ def build(args):
         if cmd == "host":
             print(f'  -> HOST {cmdargs}')
             subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
+
         elif cmd == "run":
             print(f'  -> RUN {cmdargs}')
             nspawn_cmd = ['systemd-nspawn', '--quiet']
@@ -236,6 +254,20 @@ def build(args):
                 nspawn_cmd.extend(('--setenv',f'{key}={val}'))
             nspawn_cmd.extend(('-D', target, '/bin/sh', '-c', cmdargs))
             subprocess.run(nspawn_cmd, cwd=target, check=True, shell=False, env=df.env)
+
+        elif cmd == "copy":
+            print(f'  -> COPY {cmdargs}')
+            *srcs, dest = shlex.split(cmdargs)
+            if Path(dest).is_absolute():
+                dest = target / dest[1:]
+            else:
+                dest = target / dest
+            if len(srcs) > 1 and not dest.is_dir():
+                raise NotADirectoryError("Destination must be a directory")
+            cmd = ['cp', '-rv']
+            cmd.extend(srcs)
+            cmd.append(str(dest))
+            subprocess.run(cmd, cwd=context, check=True, shell=False, env=host_env)
 
         ## Seal build image
         os.setxattr(target, b"user.parent_hash", parent_hash.encode())
@@ -268,6 +300,27 @@ def build(args):
 
     print(f"==> Successfully built {parent_hash[:16]}")
 
+
+def export(args):
+    runtime = Path(args.runtime).resolve()
+    r = ImageStorage(runtime)
+    image = r.find_last_build_by_name(args.container)
+
+    if not image:
+        raise Exception(f'Can\'t find container image with name "{args.container}"')
+    print(f'==> Exporting image "{args.container}" with hash {image[:16]}')
+
+    if args.type == "squashfs":
+        if not args.output:
+            raise Exception("--output argument missing. Squashfs can't be written to STDOUT")
+        print("  -> Building squashfs image")
+        subprocess.run(('mksquashfs', runtime / image, args.output, '-no-xattrs', '-noappend'))
+    else:
+        raise NotImplementedError(f"Can't yet export container image with type {args.type}")
+
+
+def run(args):
+    raise NotImplementedError("Can't yet run commands inside the container")
 
 def strtobool(x):
     return bool(distutils.util.strtobool(x))
@@ -310,9 +363,43 @@ def parseargs():
         help='context for the build')
     build_parser.set_defaults(func=build)
 
+    # Export parser
     export_parser = subparsers.add_parser(
         'export', help="Export image"
     )
+    export_parser.add_argument('--output', '-o',
+        action='store',
+        help="Write to a file, instead of STDOUT")
+    export_parser.add_argument('--type',
+        action='store',
+        choices=('tar.gz', 'squashfs'),
+        default='squashfs',
+        help="Export image type (Default squashfs)"
+    )
+    export_parser.add_argument('container',
+        action='store',
+        metavar='CONTAINER',
+        help='Name of the conainer image to export'
+    )
+    export_parser.set_defaults(func=export)
+
+    # Run parser
+    run_parser = subparsers.add_parser(
+        'run', help="Run image"
+    )
+    run_parser.add_argument('container',
+        action='store',
+        metavar='CONTAINER',
+        help='Name or hash of the container image to run'
+    )
+    run_parser.add_argument('command',
+        action='store',
+        nargs='?',
+        metavar='COMMAND',
+        default='/bin/bash',
+        help='Command to run inside the container (Default /bin/bash)'
+    )
+    run_parser.set_defaults(func=run)
 
     return parser.parse_args()
 
@@ -325,6 +412,7 @@ def main():
     if hasattr(args, "func"):
         args.func(args)
     else:
+        print("No command defined in argparser")
         exit(1)
 
 if __name__ == "__main__":

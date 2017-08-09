@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name = "noby",
-    version = "0.1",
+    version = "0.2",
     author = "Arti Zirk",
     author_email = "arti.zirk@gmail.com",
     description = "Minimal dockerfile builder",

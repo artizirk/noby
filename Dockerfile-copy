@@ -1,0 +1,4 @@
+FROM scratch
+
+COPY noby.py buildfiles/. /
+COPY buildfiles/debian-base/. /
