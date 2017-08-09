@@ -10,6 +10,8 @@ from pathlib import Path
 from pprint import pprint
 
 
+__version__ = "0.2"
+
 class DockerfileParser():
 
     def __init__(self, dockerfile):
@@ -332,6 +334,7 @@ def parseargs():
         '--runtime', action='store',
         help='Directory where runtime files are stored. (Default /var/lib/noby)',
         default=os.environ.get('NOBY_RUNTIME','/var/lib/noby'))
+    parser.add_argument('--version', action='version', version=__version__)
     subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', help='commands')
     subparsers.required = True
 

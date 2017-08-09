@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
 from setuptools import setup
+from noby import __version__
 
 
 setup(
     name = "noby",
-    version = "0.2",
+    version = __version__,
     author = "Arti Zirk",
     author_email = "arti.zirk@gmail.com",
     description = "Minimal dockerfile builder",
