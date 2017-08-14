@@ -10,7 +10,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.2"
+__version__ = "0.2.1"
 
 class DockerfileParser():
 
@@ -188,6 +188,7 @@ def build(args):
     if not args.no_cache:
         full_build_hash = sha256()
         for cmd, cmdargs in df.build_commands:
+            full_build_hash.update(cmd.encode())
             full_build_hash.update(cmdargs.encode())
 
         if (runtime / full_build_hash.hexdigest()).exists():
