@@ -86,11 +86,10 @@ class ImageStorage():
             name = image.name
             self.images[name] = attrs = {}
 
-
-            for attr in os.listxattr(image):
+            for attr in os.listxattr(str(image)):
                 if not attr.startswith("user."):
                     continue
-                val = os.getxattr(image, attr)
+                val = os.getxattr(str(image), attr)
                 val = val.decode()
                 key = attr[5:]
                 attrs[key] = val
@@ -221,7 +220,7 @@ def build(args):
             else:
                 previous_parent_hash = ""
                 try:
-                    previous_parent_hash = os.getxattr(final_target, b"user.parent_hash").decode()
+                    previous_parent_hash = os.getxattr(str(final_target), b"user.parent_hash").decode()
                 except:
                     pass
                 if parent_hash and parent_hash != previous_parent_hash:
@@ -239,7 +238,7 @@ def build(args):
         if parent_hash:
             btrfs_subvol_snapshot(runtime / parent_hash, target)
             try:
-                os.removexattr(target, b"user.name")
+                os.removexattr(str(target), b"user.name")
             except:
                 pass
         else:
@@ -273,19 +272,19 @@ def build(args):
             subprocess.run(cmd, cwd=context, check=True, shell=False, env=host_env)
 
         ## Seal build image
-        os.setxattr(target, b"user.parent_hash", parent_hash.encode())
+        os.setxattr(str(target), b"user.parent_hash", parent_hash.encode())
         for attr in ("user.cmd.host", "user.cmd.run"):
             try:
-                os.removexattr(target, attr.encode())
+                os.removexattr(str(target), attr.encode())
             except:
                 pass
-        os.setxattr(target, "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
+        os.setxattr(str(target), "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
 
         if args.tag:
-            os.setxattr(target, b"user.name", args.tag.encode())
+            os.setxattr(str(target), b"user.name", args.tag.encode())
         else:
             try:
-                os.removexattr(target, b"user.name")
+                os.removexattr(str(target), b"user.name")
             except:
                 pass
 
