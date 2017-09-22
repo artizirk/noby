@@ -39,7 +39,7 @@ class DockerfileParser():
             self.from_image = args
 
     def _parse_file(self, dockerfile):
-        with open(dockerfile) as f:
+        with dockerfile.open() as f:
             for rawline in self._yield_lines(f.readlines()):
                 line = self._line_parser(rawline)
                 self.lines.append(line)
