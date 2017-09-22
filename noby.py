@@ -254,7 +254,7 @@ def build(args):
             nspawn_cmd = ['systemd-nspawn', '--quiet']
             for key, val in df.env.items():
                 nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
-            nspawn_cmd.extend(('-D', target, '/bin/sh', '-c', cmdargs))
+            nspawn_cmd.extend(('-D', str(target), '/bin/sh', '-c', cmdargs))
             subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
         elif cmd == "copy":
