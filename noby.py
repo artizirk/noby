@@ -76,7 +76,7 @@ class ImageStorage():
     def __init__(self, runtime):
         self.runtime = Path(runtime)
         if not self.runtime.exists():
-            raise FileNotFoundError(f"Runtime dir {self.runtime} does not exist")
+            raise FileNotFoundError("Runtime dir {} does not exist".format(self.runtime))
 
         self.images = {}
         self._scan()
@@ -162,7 +162,7 @@ def build(args):
         dockerfile = context / dockerfile
     dockerfile = dockerfile.resolve()
     if not dockerfile.is_file():
-        raise FileNotFoundError(f"{dockerfile} does not exist")
+        raise FileNotFoundError("{} does not exist".format(dockerfile))
 
     runtime = Path(args.runtime).resolve()
 
@@ -179,8 +179,8 @@ def build(args):
     else:
         parent_hash = r.find_last_build_by_name(df.from_image)
         if not parent_hash:
-            raise FileNotFoundError(f"Image with name {df.from_image} not found")
-        print(f"Using parent image {parent_hash[:16]}")
+            raise FileNotFoundError("Image with name {} not found".format(df.from_image))
+        print("Using parent image {}".format(parent_hash[:16]))
 
     total_build_steps = len(df.build_commands)
     build_hashes = []
@@ -192,7 +192,7 @@ def build(args):
             full_build_hash.update(cmdargs.encode())
 
         if (runtime / full_build_hash.hexdigest()).exists():
-            print(f"==> Already built {full_build_hash.hexdigest()[:16]}")
+            print("==> Already built {}".format(full_build_hash.hexdigest()[:16]))
             return
 
     for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
@@ -204,7 +204,7 @@ def build(args):
             build_hash.update(int(mtime).to_bytes(4, 'big'))
         args_hash = build_hash.hexdigest()
         build_hashes.append(args_hash)
-        print(f"==> Building step {current_build_step}/{total_build_steps} {args_hash[:16]}")
+        print("==> Building step {}/{} {}".format(current_build_step, total_build_steps, args_hash[:16]))
 
         target = runtime / (args_hash+"-init")
         final_target = runtime / args_hash
@@ -279,7 +279,7 @@ def build(args):
                 os.removexattr(target, attr.encode())
             except:
                 pass
-        os.setxattr(target, f"user.cmd.{cmd}".encode(), cmdargs.encode())
+        os.setxattr(target, "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
 
         if args.tag:
             os.setxattr(target, b"user.name", args.tag.encode())
@@ -298,10 +298,10 @@ def build(args):
         for build_hash in build_hashes[:-1]:
             target = runtime / build_hash
             if target.exists():
-                print(f"  -> Remove intermediate image {build_hash[:16]}")
+                print("  -> Remove intermediate image {}".format(build_hash[:16]))
                 btrfs_subvol_delete(target)
 
-    print(f"==> Successfully built {parent_hash[:16]}")
+    print("==> Successfully built {}".format(parent_hash[:16]))
 
 
 def export(args):
@@ -319,7 +319,7 @@ def export(args):
         print("  -> Building squashfs image")
         subprocess.run(('mksquashfs', runtime / image, args.output, '-no-xattrs', '-noappend'))
     else:
-        raise NotImplementedError(f"Can't yet export container image with type {args.type}")
+        raise NotImplementedError("Can't yet export container image with type {}".format(args.type))
 
 
 def run(args):
