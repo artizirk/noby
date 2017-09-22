@@ -122,21 +122,21 @@ class ImageStorage():
 
 
 def btrfs_subvol_create(path):
-    subprocess.run(("btrfs", "subvolume", "create", path),
+    subprocess.run(("btrfs", "subvolume", "create", str(path)),
         check=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
 def btrfs_subvol_delete(path):
-    subprocess.run(("btrfs", "subvolume", "delete", path),
+    subprocess.run(("btrfs", "subvolume", "delete", str(path)),
         check=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
 def btrfs_subvol_snapshot(src, dest, *, readonly=False):
-    cmd = ("btrfs", "subvolume", "snapshot", src, dest)
+    cmd = ("btrfs", "subvolume", "snapshot", str(src), str(dest))
     if readonly:
-        cmd = ("btrfs", "subvolume", "snapshot", "-r", src, dest)
+        cmd = ("btrfs", "subvolume", "snapshot", "-r", str(src), str(dest))
     subprocess.run(cmd,
         check=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
