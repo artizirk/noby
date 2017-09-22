@@ -247,19 +247,19 @@ def build(args):
 
         ## Run build step
         if cmd == "host":
-            print(f'  -> HOST {cmdargs}')
+            print('  -> HOST {}'.format(cmdargs))
             subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
 
         elif cmd == "run":
-            print(f'  -> RUN {cmdargs}')
+            print('  -> RUN {}'.format(cmdargs))
             nspawn_cmd = ['systemd-nspawn', '--quiet']
             for key, val in df.env.items():
-                nspawn_cmd.extend(('--setenv',f'{key}={val}'))
+                nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
             nspawn_cmd.extend(('-D', target, '/bin/sh', '-c', cmdargs))
             subprocess.run(nspawn_cmd, cwd=target, check=True, shell=False, env=df.env)
 
         elif cmd == "copy":
-            print(f'  -> COPY {cmdargs}')
+            print("  -> COPY {}".format(cmdargs))
             *srcs, dest = shlex.split(cmdargs)
             if Path(dest).is_absolute():
                 dest = target / dest[1:]
@@ -310,8 +310,8 @@ def export(args):
     image = r.find_last_build_by_name(args.container)
 
     if not image:
-        raise Exception(f'Can\'t find container image with name "{args.container}"')
-    print(f'==> Exporting image "{args.container}" with hash {image[:16]}')
+        raise Exception('Can\'t find container image with name "{}"'.format(args.container))
+    print('==> Exporting image "{}" with hash {}'.format(args.container, image[:16]))
 
     if args.type == "squashfs":
         if not args.output:
