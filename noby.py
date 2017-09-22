@@ -247,7 +247,7 @@ def build(args):
         ## Run build step
         if cmd == "host":
             print('  -> HOST {}'.format(cmdargs))
-            subprocess.run(cmdargs, cwd=context, check=True, shell=True, env=host_env)
+            subprocess.run(cmdargs, cwd=str(context), check=True, shell=True, env=host_env)
 
         elif cmd == "run":
             print('  -> RUN {}'.format(cmdargs))
@@ -255,7 +255,7 @@ def build(args):
             for key, val in df.env.items():
                 nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
             nspawn_cmd.extend(('-D', target, '/bin/sh', '-c', cmdargs))
-            subprocess.run(nspawn_cmd, cwd=target, check=True, shell=False, env=df.env)
+            subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
         elif cmd == "copy":
             print("  -> COPY {}".format(cmdargs))
@@ -269,7 +269,7 @@ def build(args):
             cmd = ['cp', '-rv']
             cmd.extend(srcs)
             cmd.append(str(dest))
-            subprocess.run(cmd, cwd=context, check=True, shell=False, env=host_env)
+            subprocess.run(cmd, cwd=str(context), check=True, shell=False, env=host_env)
 
         ## Seal build image
         os.setxattr(str(target), b"user.parent_hash", parent_hash.encode())
@@ -316,7 +316,7 @@ def export(args):
         if not args.output:
             raise Exception("--output argument missing. Squashfs can't be written to STDOUT")
         print("  -> Building squashfs image")
-        subprocess.run(('mksquashfs', runtime / image, args.output, '-no-xattrs', '-noappend'))
+        subprocess.run(('mksquashfs', str(runtime / image), args.output, '-no-xattrs', '-noappend'))
     else:
         raise NotImplementedError("Can't yet export container image with type {}".format(args.type))
 
