@@ -208,8 +208,8 @@ def build(args):
         target = runtime / (args_hash+"-init")
         final_target = runtime / args_hash
         host_env = {
-            "TARGET": target,
-            "CONTEXT": context
+            "TARGET": str(target),
+            "CONTEXT": str(context)
         }
         host_env.update(df.env)
 
