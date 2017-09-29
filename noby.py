@@ -10,7 +10,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 class DockerfileParser():
 
