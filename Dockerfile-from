@@ -1,5 +1,4 @@
-FROM test
+FROM busybox
 
-HOST echo "im from test"
-HOST ls -lah $TARGET
-HOST cat $TARGET/test
+RUN echo "From busybox"
+RUN cat test

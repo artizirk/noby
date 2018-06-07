@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import shlex
 import shutil
 import argparse
@@ -10,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 class DockerfileParser():
 
@@ -99,26 +100,20 @@ class ImageStorage():
             if attrs.get("parent_hash") == parent_hash:
                 yield image, attrs
 
-    def find_by_name(self, name):
-        for image, attrs in self.images.items():
-            if attrs.get("name") == name:
-                yield image, attrs
-
     def find_last_build_by_name(self, name):
-        image_hashes = list(self.find_by_name(name))
-        if not image_hashes:
-            return None
+        link = self.runtime / ("tag-"+str(name))
 
-        image_hash = None
-        for h, a in image_hashes:
-            if h.endswith("-init"):
-                continue
-            image_hash = h
+        if not link.exists():
+            return  # Tag does not exist
 
-        if not image_hash:
-            return None
+        image = Path(os.readlink(link))
+        if not image.exists():
+            return  # Tag points to non existing image
 
-        return image_hash
+        if image.name.endswith('-init'):
+            return  # Tag points to invalid image
+
+        return image.name  # its a valid image
 
 
 def btrfs_subvol_create(path):
@@ -141,6 +136,7 @@ def btrfs_subvol_snapshot(src, dest, *, readonly=False):
         check=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
+
 
 def newest_file(context, cmdargs):
     *srcs, dest = shlex.split(cmdargs)
@@ -184,7 +180,7 @@ def build(args):
     total_build_steps = len(df.build_commands)
     build_hashes = []
 
-    if not args.no_cache:
+    if not args.no_cache and args.rm:
         full_build_hash = sha256()
         for cmd, cmdargs in df.build_commands:
             full_build_hash.update(cmd.encode())
@@ -201,6 +197,8 @@ def build(args):
         if cmd == "copy":
             mtime = newest_file(context, cmdargs)
             build_hash.update(int(mtime).to_bytes(4, 'big'))
+        if parent_hash:
+            build_hash.update(parent_hash.encode())
         args_hash = build_hash.hexdigest()
         build_hashes.append(args_hash)
         print("==> Building step {}/{} {}".format(current_build_step, total_build_steps, args_hash[:16]))
@@ -237,10 +235,6 @@ def build(args):
 
         if parent_hash:
             btrfs_subvol_snapshot(runtime / parent_hash, target)
-            try:
-                os.removexattr(str(target), b"user.name")
-            except:
-                pass
         else:
             btrfs_subvol_create(target)
 
@@ -280,16 +274,9 @@ def build(args):
                 pass
         os.setxattr(str(target), "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
 
-        if args.tag:
-            os.setxattr(str(target), b"user.name", args.tag.encode())
-        else:
-            try:
-                os.removexattr(str(target), b"user.name")
-            except:
-                pass
-
         btrfs_subvol_snapshot(target, final_target, readonly=True)
         btrfs_subvol_delete(target)
+
         parent_hash = args_hash
 
     if args.rm:
@@ -301,6 +288,14 @@ def build(args):
                 btrfs_subvol_delete(target)
 
     print("==> Successfully built {}".format(parent_hash[:16]))
+
+    if args.tag:
+        tmp_tag = runtime / ("tag-" + args.tag + "-tmp")
+        if tmp_tag.exists():
+            os.unlink(tmp_tag)
+        os.symlink(str(runtime / build_hashes[-1]), tmp_tag)
+        os.replace(tmp_tag, runtime / ("tag-" + args.tag))
+        print("==> Tagged image {} as {}".format(build_hashes[-1][:16], args.tag))
 
 
 def export(args):
@@ -323,6 +318,19 @@ def export(args):
 
 def run(args):
     raise NotImplementedError("Can't yet run commands inside the container")
+
+
+def wipe(args):
+    runtime = Path(args.runtime).resolve()
+    r = ImageStorage(runtime)
+    print("==> Removing {} images from runtime store".format(len(r.images)))
+    for image in r.images.keys():
+        print("  -> Removing {}".format(image[:16]))
+        if image.startswith('tag'):
+            os.unlink(str(runtime/image))
+        else:
+            btrfs_subvol_delete(str(runtime/image))
+
 
 def strtobool(x):
     return bool(distutils.util.strtobool(x))
@@ -356,10 +364,10 @@ def parseargs():
         help="Do not use cached images (Default false)")
     build_parser.add_argument('--rm',
         action='store',
-        default=True,
+        default=False,
         type=strtobool,
         metavar='{true, false}',
-        help="Remove intermediate images (Default true)")
+        help="Remove intermediate images (Default False)")
     build_parser.add_argument('path',
         action='store',
         metavar='PATH',
@@ -404,10 +412,19 @@ def parseargs():
     )
     run_parser.set_defaults(func=run)
 
+    wipe_parser = subparsers.add_parser(
+        'wipe', help="Wipe runtime folder"
+    )
+    wipe_parser.set_defaults(func=wipe)
+
     return parser.parse_args()
 
 def main():
     args = parseargs()
+
+    if os.getuid() != 0:
+        print("This script must be run as root")
+        sys.exit(1)
 
     runtime = Path(args.runtime).resolve()
     runtime.mkdir(parents=True, exist_ok=True)
