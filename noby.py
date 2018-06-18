@@ -20,6 +20,7 @@ class DockerfileParser():
         self.env = {}
         self.from_image = None
         self.build_commands = []
+        self.build_hashes = []
         self._parse_file(dockerfile)
 
     def _populate_env(self, rawenv):
@@ -71,6 +72,15 @@ class DockerfileParser():
             if not string.endswith("\\"):
                 yield "\n".join(current_line)
                 current_line = []
+
+    def calc_build_hashes(self, parent_hash=None):
+        build_hash = sha256()
+        if parent_hash:
+            build_hash.update(parent_hash.encode())
+        for cmd, args in self.build_commands:
+            build_hash.update(cmd.encode())
+            build_hash.update(args.encode())
+            self.build_hashes.append(build_hash.hexdigest())
 
 class ImageStorage():
 
@@ -168,43 +178,32 @@ def build(args):
         print("Nothing to do")
         return
 
-    build_hash = sha256()
-    if df.from_image == "scratch":
-        parent_hash = ""
-    else:
+    #  Locate base image for this dockerfile
+    parent_hash = ""
+    if df.from_image != "scratch":
         parent_hash = r.find_last_build_by_name(df.from_image)
         if not parent_hash:
             raise FileNotFoundError("Image with name {} not found".format(df.from_image))
         print("Using parent image {}".format(parent_hash[:16]))
 
+    #  Update build hashes based on base image
+    df.calc_build_hashes(parent_hash=parent_hash)
     total_build_steps = len(df.build_commands)
-    build_hashes = []
 
+    #  Early exit if image is already built
     if not args.no_cache and args.rm:
-        full_build_hash = sha256()
-        for cmd, cmdargs in df.build_commands:
-            full_build_hash.update(cmd.encode())
-            full_build_hash.update(cmdargs.encode())
-
-        if (runtime / full_build_hash.hexdigest()).exists():
-            print("==> Already built {}".format(full_build_hash.hexdigest()[:16]))
+        if (runtime / df.build_hashes[-1]).exists():
+            print("==> Already built {}".format(df.build_hashes[-1][:16]))
             return
 
+    #  Do the build
     for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
-        current_build_step += 1
-        build_hash.update(cmd.encode())
-        build_hash.update(cmdargs.encode())
-        if cmd == "copy":
-            mtime = newest_file(context, cmdargs)
-            build_hash.update(int(mtime).to_bytes(4, 'big'))
-        if parent_hash:
-            build_hash.update(parent_hash.encode())
-        args_hash = build_hash.hexdigest()
-        build_hashes.append(args_hash)
-        print("==> Building step {}/{} {}".format(current_build_step, total_build_steps, args_hash[:16]))
+        build_step_hash = df.build_hashes[current_build_step]
 
-        target = runtime / (args_hash+"-init")
-        final_target = runtime / args_hash
+        print("==> Building step {}/{} {}".format(current_build_step+1, total_build_steps, build_step_hash[:16]))
+
+        target = runtime / (build_step_hash+"-init")
+        final_target = runtime / build_step_hash
         host_env = {
             "TARGET": str(target),
             "CONTEXT": str(context)
@@ -226,7 +225,7 @@ def build(args):
                     btrfs_subvol_delete(final_target)
                 else:
                     print("  -> Using cached image")
-                    parent_hash = args_hash
+                    parent_hash = build_step_hash
                     continue
 
         if target.exists():
@@ -277,11 +276,12 @@ def build(args):
         btrfs_subvol_snapshot(target, final_target, readonly=True)
         btrfs_subvol_delete(target)
 
-        parent_hash = args_hash
+        parent_hash = build_step_hash
 
+    #  After build cleanup
     if args.rm:
         print("==> Cleanup")
-        for build_hash in build_hashes[:-1]:
+        for build_hash in df.build_hashes[:-1]:
             target = runtime / build_hash
             if target.exists():
                 print("  -> Remove intermediate image {}".format(build_hash[:16]))
@@ -293,9 +293,9 @@ def build(args):
         tmp_tag = runtime / ("tag-" + args.tag + "-tmp")
         if tmp_tag.exists():
             os.unlink(tmp_tag)
-        os.symlink(str(runtime / build_hashes[-1]), tmp_tag)
+        os.symlink(str(runtime / parent_hash), tmp_tag)
         os.replace(tmp_tag, runtime / ("tag-" + args.tag))
-        print("==> Tagged image {} as {}".format(build_hashes[-1][:16], args.tag))
+        print("==> Tagged image {} as {}".format(parent_hash[:16], args.tag))
 
 
 def export(args):
