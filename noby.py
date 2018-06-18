@@ -11,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.2.3"
+__version__ = "0.3.0"
 
 class DockerfileParser():
 
@@ -170,7 +170,6 @@ def build(args):
         raise FileNotFoundError("{} does not exist".format(dockerfile))
 
     runtime = Path(args.runtime).resolve()
-
     r = ImageStorage(runtime)
 
     df = DockerfileParser(dockerfile)
@@ -247,7 +246,7 @@ def build(args):
             nspawn_cmd = ['systemd-nspawn', '--quiet']
             for key, val in df.env.items():
                 nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
-            nspawn_cmd.extend(('-D', str(target), '/bin/sh', '-c', cmdargs))
+            nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', cmdargs))
             subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
         elif cmd == "copy":
@@ -317,7 +316,61 @@ def export(args):
 
 
 def run(args):
-    raise NotImplementedError("Can't yet run commands inside the container")
+    context = Path(args.container).resolve()
+    dockerfile = Path(args.file)
+    if not dockerfile.is_absolute():
+        dockerfile = context / dockerfile
+    dockerfile = dockerfile.resolve()
+    if not dockerfile.is_file():
+        raise FileNotFoundError("{} does not exist".format(dockerfile))
+
+    runtime = Path(args.runtime).resolve()
+    r = ImageStorage(runtime)
+
+    df = DockerfileParser(dockerfile)
+
+    #  Locate base image for this Dockerfile
+    parent_hash = ""
+    if df.from_image != "scratch":
+        parent_hash = r.find_last_build_by_name(df.from_image)
+        if not parent_hash:
+            raise FileNotFoundError("Image with name {} not found".format(df.from_image))
+        print("Using parent image {}".format(parent_hash[:16]))
+
+    #  Update build hashes based on base image
+    df.calc_build_hashes(parent_hash=parent_hash)
+
+    target = runtime / df.build_hashes[-1]
+    if not target.exists():
+        raise FileNotFoundError("Image {} not found".format(df.build_hashes[-1]))
+
+    print('  -> RUN {}'.format(args.command))
+    nspawn_cmd = ['systemd-nspawn', '--quiet']
+    for key, val in df.env.items():
+        nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
+    if args.rm:
+        nspawn_cmd.append('-x')
+    if args.volume:
+        src_dest = args.volume.split(':')
+        if len(src_dest) > 1:
+            src = src_dest[0]
+            dest = ":".join(src_dest[1:])
+        else:
+            src = src_dest[0]
+            dest = ''
+        src = Path(src)
+        if not src.exists():
+            raise FileNotFoundError("Volume {} does not exist".format(src))
+        if not src.is_absolute():
+            src = src.resolve()
+        if not dest:
+            dest = '/'+src.name
+        if not dest.startswith('/'):
+            dest = '/'+dest
+        volume = "{}:{}".format(src, dest)
+        nspawn_cmd.append('--bind='+str(volume))
+    nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', args.command))
+    subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
 
 def wipe(args):
@@ -340,7 +393,7 @@ def parseargs():
     parser = argparse.ArgumentParser(description='Mini docker like image builder')
     parser.add_argument(
         '--runtime', action='store',
-        help='Directory where runtime files are stored. (Default /var/lib/noby)',
+        help='Directory where runtime files are stored. (Default NOBY_RUNTIME env variable or /var/lib/noby)',
         default=os.environ.get('NOBY_RUNTIME','/var/lib/noby'))
     parser.add_argument('--version', action='version', version=__version__)
     subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', help='commands')
@@ -398,6 +451,24 @@ def parseargs():
     run_parser = subparsers.add_parser(
         'run', help="Run image"
     )
+
+    run_parser.add_argument('--file', '-f',
+        action='store',
+        help="Name of the dockerfile. (Default 'PATH/Dockerfile')",
+        default="Dockerfile")
+
+    run_parser.add_argument('--rm',
+        action='store',
+        default=True,
+        type=strtobool,
+        metavar='{true, false}',
+        help="Remove the image after exit (Default True)")
+
+    run_parser.add_argument('--volume',
+        action='store',
+        help="Bind mount a volume into the image (See systemd-nspawn --bind option)"
+    )
+
     run_parser.add_argument('container',
         action='store',
         metavar='CONTAINER',
@@ -407,8 +478,8 @@ def parseargs():
         action='store',
         nargs='?',
         metavar='COMMAND',
-        default='/bin/bash',
-        help='Command to run inside the container (Default /bin/bash)'
+        default='/bin/sh',
+        help='Command to run inside the container (Default /bin/sh)'
     )
     run_parser.set_defaults(func=run)
 
