@@ -116,7 +116,7 @@ class ImageStorage():
         if not link.exists():
             return  # Tag does not exist
 
-        image = Path(os.readlink(link))
+        image = Path(os.readlink(str(link)))
         if not image.exists():
             return  # Tag points to non existing image
 
