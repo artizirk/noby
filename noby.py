@@ -11,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 class DockerfileParser():
 
@@ -291,9 +291,9 @@ def build(args):
     if args.tag:
         tmp_tag = runtime / ("tag-" + args.tag + "-tmp")
         if tmp_tag.exists():
-            os.unlink(tmp_tag)
-        os.symlink(str(runtime / parent_hash), tmp_tag)
-        os.replace(tmp_tag, runtime / ("tag-" + args.tag))
+            os.unlink(str(tmp_tag))
+        os.symlink(str(runtime / parent_hash), str(tmp_tag))
+        os.replace(str(tmp_tag), str(runtime / ("tag-" + args.tag)))
         print("==> Tagged image {} as {}".format(parent_hash[:16], args.tag))
 
 
