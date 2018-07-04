@@ -11,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 class DockerfileParser():
 
@@ -96,6 +96,9 @@ class ImageStorage():
         for image in self.runtime.iterdir():
             name = image.name
             self.images[name] = attrs = {}
+
+            if not image.exists():
+                continue
 
             for attr in os.listxattr(str(image)):
                 if not attr.startswith("user."):
