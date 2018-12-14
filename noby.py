@@ -83,6 +83,11 @@ class DockerfileParser():
             build_hash.update(args.encode())
             self.build_hashes.append(build_hash.hexdigest())
 
+    def add_env_variables(self, env_variables):
+        for variable in env_variables:
+            self._populate_env(variable)
+
+
 class ImageStorage():
 
     def __init__(self, runtime):
@@ -180,6 +185,9 @@ def build(args):
     if not df.build_commands:
         print("Nothing to do")
         return
+
+    if args.env:
+        df.add_env_variables(args.env)
 
     #  Locate base image for this dockerfile
     parent_hash = ""
@@ -425,6 +433,10 @@ def parseargs():
         type=strtobool,
         metavar='{true, false}',
         help="Remove intermediate images (Default False)")
+    build_parser.add_argument('-e', '--env',
+        action='append',
+        metavar='FOO=bar',
+        help='Set or override ENV variables.')
     build_parser.add_argument('path',
         action='store',
         metavar='PATH',
