@@ -16,3 +16,14 @@ sudo ./noby.py build -f Dockerfile-from .
 
 #  Test run
 sudo ./noby.py run -f Dockerfile . "echo Hello Noby"
+
+
+#Test Environment variables.
+sudo ./noby.py wipe
+
+#Should not add any env variables
+sudo ./noby.py build -f Dockerfile-env .
+
+sudo ./noby.py wipe
+#Should override BAR value and add DEV value
+sudo ./noby.py build -e BAR=modified --env DEV=devvalue -f Dockerfile-env .

@@ -13,6 +13,7 @@ from pprint import pprint
 
 __version__ = "0.3.2"
 
+
 class DockerfileParser():
 
     def __init__(self, dockerfile):
@@ -82,6 +83,11 @@ class DockerfileParser():
             build_hash.update(args.encode())
             self.build_hashes.append(build_hash.hexdigest())
 
+    def add_env_variables(self, env_variables):
+        for variable in env_variables:
+            self._populate_env(variable)
+
+
 class ImageStorage():
 
     def __init__(self, runtime):
@@ -114,7 +120,7 @@ class ImageStorage():
                 yield image, attrs
 
     def find_last_build_by_name(self, name):
-        link = self.runtime / ("tag-"+str(name))
+        link = self.runtime / ("tag-" + str(name))
 
         if not link.exists():
             return  # Tag does not exist
@@ -180,6 +186,9 @@ def build(args):
         print("Nothing to do")
         return
 
+    if args.env:
+        df.add_env_variables(args.env)
+
     #  Locate base image for this dockerfile
     parent_hash = ""
     if df.from_image != "scratch":
@@ -202,9 +211,9 @@ def build(args):
     for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
         build_step_hash = df.build_hashes[current_build_step]
 
-        print("==> Building step {}/{} {}".format(current_build_step+1, total_build_steps, build_step_hash[:16]))
+        print("==> Building step {}/{} {}".format(current_build_step + 1, total_build_steps, build_step_hash[:16]))
 
-        target = runtime / (build_step_hash+"-init")
+        target = runtime / (build_step_hash + "-init")
         final_target = runtime / build_step_hash
         host_env = {
             "TARGET": str(target),
@@ -248,7 +257,7 @@ def build(args):
             print('  -> RUN {}'.format(cmdargs))
             nspawn_cmd = ['systemd-nspawn', '--quiet']
             for key, val in df.env.items():
-                nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
+                nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
             nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', cmdargs))
             subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
@@ -350,7 +359,7 @@ def run(args):
     print('  -> RUN {}'.format(args.command))
     nspawn_cmd = ['systemd-nspawn', '--quiet']
     for key, val in df.env.items():
-        nspawn_cmd.extend(('--setenv','{}={}'.format(key, val)))
+        nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
     if args.rm:
         nspawn_cmd.append('-x')
     if args.volume:
@@ -367,11 +376,11 @@ def run(args):
         if not src.is_absolute():
             src = src.resolve()
         if not dest:
-            dest = '/'+src.name
+            dest = '/' + src.name
         if not dest.startswith('/'):
-            dest = '/'+dest
+            dest = '/' + dest
         volume = "{}:{}".format(src, dest)
-        nspawn_cmd.append('--bind='+str(volume))
+        nspawn_cmd.append('--bind=' + str(volume))
     nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', args.command))
     subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
 
@@ -383,9 +392,9 @@ def wipe(args):
     for image in r.images.keys():
         print("  -> Removing {}".format(image[:16]))
         if image.startswith('tag'):
-            os.unlink(str(runtime/image))
+            os.unlink(str(runtime / image))
         else:
-            btrfs_subvol_delete(str(runtime/image))
+            btrfs_subvol_delete(str(runtime / image))
 
 
 def strtobool(x):
@@ -397,7 +406,7 @@ def parseargs():
     parser.add_argument(
         '--runtime', action='store',
         help='Directory where runtime files are stored. (Default NOBY_RUNTIME env variable or /var/lib/noby)',
-        default=os.environ.get('NOBY_RUNTIME','/var/lib/noby'))
+        default=os.environ.get('NOBY_RUNTIME', '/var/lib/noby'))
     parser.add_argument('--version', action='version', version=__version__)
     subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', help='commands')
     subparsers.required = True
@@ -424,6 +433,10 @@ def parseargs():
         type=strtobool,
         metavar='{true, false}',
         help="Remove intermediate images (Default False)")
+    build_parser.add_argument('-e', '--env',
+        action='append',
+        metavar='FOO=bar',
+        help='Set or override ENV variables.')
     build_parser.add_argument('path',
         action='store',
         metavar='PATH',
@@ -493,6 +506,7 @@ def parseargs():
 
     return parser.parse_args()
 
+
 def main():
     args = parseargs()
 
@@ -508,6 +522,7 @@ def main():
     else:
         print("No command defined in argparser")
         exit(1)
+
 
 if __name__ == "__main__":
     main()
