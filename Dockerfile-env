@@ -1,0 +1,8 @@
+FROM scratch
+ENV FOO=foovalue
+ENV BAR=unmodified
+
+
+HOST echo "FOO: ${FOO}"
+HOST echo "BAR: ${BAR}"
+HOST echo "DEV: ${DEV}"
