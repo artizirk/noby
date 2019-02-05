@@ -319,12 +319,37 @@ def export(args):
     print('==> Exporting image "{}" with hash {}'.format(args.container, image[:16]))
 
     if args.type == "squashfs":
-        if not args.output:
-            raise Exception("--output argument missing. Squashfs can't be written to STDOUT")
-        print("  -> Building squashfs image")
-        subprocess.run(('mksquashfs', str(runtime / image), args.output, '-no-xattrs', '-noappend'))
+        output = str(args.container) + ".squashfs" if args.output is None else args.output
+        print("  -> Building squashfs image "+output)
+        subprocess.run(('mksquashfs', str(runtime / image), output, '-no-xattrs', '-noappend'))
     else:
         raise NotImplementedError("Can't yet export container image with type {}".format(args.type))
+
+
+def image_import(args):
+    runtime = Path(args.runtime).resolve()
+    r = ImageStorage(runtime)
+    name = args.tag if args.tag else os.path.splitext(args.image)[0]
+    image = r.find_last_build_by_name(name)
+    if image:
+        raise Exception('Container image with name "{}" already exists'.format(name))
+
+    path = "imported-image-" + name
+    path = str(runtime / path)
+    if (os.path.isdir(path)):
+        raise Exception('Target directory {} already exists. Please remove before importing'.format(path))
+
+    extension = os.path.splitext(args.image)[1]
+    if(extension == ".squashfs" or extension == ".sqsh"):
+        print('==> Exporting image "{}" to {}'.format(args.image, path))
+        btrfs_subvol_create(path)
+        subprocess.run(("unsquashfs", "-f", "-d", path, args.image))
+    else:
+        raise NotImplementedError("Can't yet import container image with type {}".format(extension))
+
+    print('==> Tagging subvolume {} as "{}"'.format(path, name))
+    tag = "tag-" + name
+    os.symlink(path, str(runtime / tag))
 
 
 def run(args):
@@ -449,7 +474,7 @@ def parseargs():
     )
     export_parser.add_argument('--output', '-o',
         action='store',
-        help="Write to a file, instead of STDOUT")
+        help="File to be written to, defaults to the name of the container image.")
     export_parser.add_argument('--type',
         action='store',
         choices=('tar.gz', 'squashfs'),
@@ -462,6 +487,20 @@ def parseargs():
         help='Name of the conainer image to export'
     )
     export_parser.set_defaults(func=export)
+
+    # Import parser
+    import_parser = subparsers.add_parser(
+        'import', help="Import image"
+    )
+    import_parser.add_argument('image',
+        action='store',
+        metavar='image',
+        help='Name of the image to be imported'
+    )
+    import_parser.add_argument('--tag', '-t',
+        action='store',
+        help="Name of the container image to be imported. Defaults to the file name")
+    import_parser.set_defaults(func=image_import)
 
     # Run parser
     run_parser = subparsers.add_parser(
