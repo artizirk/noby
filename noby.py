@@ -319,10 +319,9 @@ def export(args):
     print('==> Exporting image "{}" with hash {}'.format(args.container, image[:16]))
 
     if args.type == "squashfs":
-        if not args.output:
-            raise Exception("--output argument missing. Squashfs can't be written to STDOUT")
-        print("  -> Building squashfs image")
-        subprocess.run(('mksquashfs', str(runtime / image), args.output, '-no-xattrs', '-noappend'))
+        output = str(args.container) + ".squashfs" if args.output is None else args.output
+        print("  -> Building squashfs image "+output)
+        subprocess.run(('mksquashfs', str(runtime / image), output, '-no-xattrs', '-noappend'))
     else:
         raise NotImplementedError("Can't yet export container image with type {}".format(args.type))
 
