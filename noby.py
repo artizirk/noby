@@ -326,6 +326,32 @@ def export(args):
         raise NotImplementedError("Can't yet export container image with type {}".format(args.type))
 
 
+def image_import(args):
+    runtime = Path(args.runtime).resolve()
+    r = ImageStorage(runtime)
+    name = os.path.splitext(args.image)[0]
+    image = r.find_last_build_by_name(name)
+    if image:
+        raise Exception('Container image with name "{}" already exists'.format(name))
+
+    path = "imported-image-" + name
+    path = str(runtime / path)
+    if (os.path.isdir(path)):
+        raise Exception('Target directory {} already exists. Please remove before importing'.format(path))
+
+    extension = os.path.splitext(args.image)[1]
+    if(extension == ".squashfs"):
+        print('==> Exporting image "{}" to {}'.format(args.image, path))
+        btrfs_subvol_create(path)
+        subprocess.run(("unsquashfs", "-f", "-d", path, args.image))
+    else:
+        raise NotImplementedError("Can't yet import container image with type {}".format(extension))
+
+    print('==> Tagging subvolume {} as "{}"'.format(path, name))
+    tag = "tag-" + name
+    os.symlink(path, str(runtime / tag))
+
+
 def run(args):
     context = Path(args.container).resolve()
     dockerfile = Path(args.file)
@@ -461,6 +487,23 @@ def parseargs():
         help='Name of the conainer image to export'
     )
     export_parser.set_defaults(func=export)
+
+    # Import parser
+    import_parser = subparsers.add_parser(
+        'import', help="Import image"
+    )
+    import_parser.add_argument('--type',
+        action='store',
+        choices=('tar.gz', 'squashfs'),
+        default='squashfs',
+        help="Import image type (Default squashfs)"
+    )
+    import_parser.add_argument('image',
+        action='store',
+        metavar='image',
+        help='Name of the image to be imported'
+    )
+    import_parser.set_defaults(func=image_import)
 
     # Run parser
     run_parser = subparsers.add_parser(
