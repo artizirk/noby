@@ -11,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.4"
+__version__ = "0.5"
 
 
 class DockerfileParser():
