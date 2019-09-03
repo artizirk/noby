@@ -11,7 +11,7 @@ from pathlib import Path
 from pprint import pprint
 
 
-__version__ = "0.5"
+__version__ = "0.6"
 nspawn_cmd_base = ['systemd-nspawn', '--quiet']
 
 
