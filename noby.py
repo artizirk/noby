@@ -12,6 +12,7 @@ from pprint import pprint
 
 
 __version__ = "0.5"
+nspawn_cmd_base = ['systemd-nspawn', '--quiet']
 
 
 class DockerfileParser():
@@ -255,7 +256,7 @@ def build(args):
 
         elif cmd == "run":
             print('  -> RUN {}'.format(cmdargs))
-            nspawn_cmd = ['systemd-nspawn', '--quiet']
+            nspawn_cmd = nspawn_cmd_base.copy()
             for key, val in df.env.items():
                 nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
             nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', cmdargs))
@@ -353,38 +354,49 @@ def image_import(args):
 
 
 def run(args):
-    context = Path(args.container).resolve()
-    dockerfile = Path(args.file)
-    if not dockerfile.is_absolute():
-        dockerfile = context / dockerfile
-    dockerfile = dockerfile.resolve()
-    if not dockerfile.is_file():
-        raise FileNotFoundError("{} does not exist".format(dockerfile))
-
     runtime = Path(args.runtime).resolve()
     r = ImageStorage(runtime)
+    df = None
 
-    df = DockerfileParser(dockerfile)
+    target = r.find_last_build_by_name(args.container)
+    if not target:
+        # try to locate non taged image
+        context = Path(args.container).resolve()
+        dockerfile = Path(args.file)
+        if not dockerfile.is_absolute():
+            dockerfile = context / dockerfile
+        dockerfile = dockerfile.resolve()
+        if not dockerfile.is_file():
+            raise FileNotFoundError("{} does not exist".format(dockerfile))
 
-    #  Locate base image for this Dockerfile
-    parent_hash = ""
-    if df.from_image != "scratch":
-        parent_hash = r.find_last_build_by_name(df.from_image)
-        if not parent_hash:
-            raise FileNotFoundError("Image with name {} not found".format(df.from_image))
-        print("Using parent image {}".format(parent_hash[:16]))
+        df = DockerfileParser(dockerfile)
 
-    #  Update build hashes based on base image
-    df.calc_build_hashes(parent_hash=parent_hash)
+        #  Locate base image for this Dockerfile
+        parent_hash = ""
+        if df.from_image != "scratch":
+            parent_hash = r.find_last_build_by_name(df.from_image)
+            if not parent_hash:
+                raise FileNotFoundError("Image with name {} not found".format(df.from_image))
+            print("Using parent image {}".format(parent_hash[:16]))
 
-    target = runtime / df.build_hashes[-1]
-    if not target.exists():
-        raise FileNotFoundError("Image {} not found".format(df.build_hashes[-1]))
+        #  Update build hashes based on base image
+        df.calc_build_hashes(parent_hash=parent_hash)
+
+        target = runtime / df.build_hashes[-1]
+        if not target.exists():
+            raise FileNotFoundError("Image {} not found".format(df.build_hashes[-1]))
+
+    else:
+        print(target)
+        target = runtime / target
+        if not target.exists():
+            raise FileNotFoundError("Image {} not found".format(args.container))
 
     print('  -> RUN {}'.format(args.command))
-    nspawn_cmd = ['systemd-nspawn', '--quiet']
-    for key, val in df.env.items():
-        nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
+    nspawn_cmd = nspawn_cmd_base.copy()
+    if df:
+        for key, val in df.env.items():
+            nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
     if args.rm:
         nspawn_cmd.append('-x')
     if args.volume:
@@ -407,7 +419,7 @@ def run(args):
         volume = "{}:{}".format(src, dest)
         nspawn_cmd.append('--bind=' + str(volume))
     nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', args.command))
-    subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
+    subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env if df else {})
 
 
 def wipe(args):

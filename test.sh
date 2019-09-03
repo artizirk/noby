@@ -15,7 +15,7 @@ sudo ./noby.py build -f Dockerfile . -t busybox
 sudo ./noby.py build -f Dockerfile-from .
 
 #  Test run
-sudo ./noby.py run -f Dockerfile . "echo Hello Noby"
+sudo ./noby.py run busybox "echo Hello Noby"
 
 
 #Test Environment variables.
