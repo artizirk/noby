@@ -15,3 +15,18 @@ For upgrade run this command
 
     sudo ./noby.py build -f Dockerfile . -t busybox
     sudo ./noby.py build -f Dockerfile-from .
+
+
+# Tests
+
+Unittests
+
+    python3 -m unittest
+
+package tests
+
+    python3 setup.py test
+
+Integration tests
+
+    ./test.sh
