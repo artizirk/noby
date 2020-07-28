@@ -15,15 +15,15 @@ __version__ = "0.6"
 nspawn_cmd_base = ['systemd-nspawn', '--quiet']
 
 
-class DockerfileParser():
-
-    def __init__(self, dockerfile):
+class DockerfileParser:
+    def __init__(self, dockerfile, context=None):
         self.lines = []
         self.env = {}
         self.from_image = None
         self.build_commands = []
         self.build_hashes = []
         self._parse_file(dockerfile)
+        self.context = context
 
     def _populate_env(self, rawenv):
         env_name, *value = rawenv.split("=")  # replace with shlex maybe
@@ -89,8 +89,7 @@ class DockerfileParser():
             self._populate_env(variable)
 
 
-class ImageStorage():
-
+class ImageStorage:
     def __init__(self, runtime):
         self.runtime = Path(runtime)
         if not self.runtime.exists():
@@ -135,6 +134,27 @@ class ImageStorage():
 
         return image.name  # its a valid image
 
+    def find_parent_hash(self, target):
+        try:
+            return os.getxattr(str(target), b"user.parent_hash").decode()
+        except:
+            return ""
+
+    def seal_image(self, target, hash, cmd, cmdargs):
+        ## Seal build image
+        volatile_target = target+'-init'
+        final_target = target
+        os.setxattr(str(volatile_target), b"user.parent_hash", hash.encode())
+        for attr in ("host", "run", "copy"):
+            try:
+                os.removexattr(str(volatile_target), ('user.cmd.'+attr).encode())
+            except:
+                pass
+        os.setxattr(str(volatile_target), "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
+
+        btrfs_subvol_snapshot(volatile_target, final_target, readonly=True)
+        btrfs_subvol_delete(volatile_target)
+
 
 def btrfs_subvol_create(path):
     subprocess.run(("btrfs", "subvolume", "create", str(path)),
@@ -170,68 +190,49 @@ def newest_file(context, cmdargs):
     return mtime
 
 
-def build(args):
-    context = Path(args.path).resolve()
-    dockerfile = Path(args.file)
-    if not dockerfile.is_absolute():
-        dockerfile = context / dockerfile
-    dockerfile = dockerfile.resolve()
-    if not dockerfile.is_file():
-        raise FileNotFoundError("{} does not exist".format(dockerfile))
-
-    runtime = Path(args.runtime).resolve()
-    r = ImageStorage(runtime)
-
-    df = DockerfileParser(dockerfile)
-    if not df.build_commands:
+def build(storage, dockerfile, cache=True, remove=False, tag=None):
+    if not dockerfile.build_commands:
         print("Nothing to do")
         return
 
-    if args.env:
-        df.add_env_variables(args.env)
-
     #  Locate base image for this dockerfile
     parent_hash = ""
-    if df.from_image != "scratch":
-        parent_hash = r.find_last_build_by_name(df.from_image)
+    if dockerfile.from_image != "scratch":
+        parent_hash = storage.find_last_build_by_name(dockerfile.from_image)
         if not parent_hash:
-            raise FileNotFoundError("Image with name {} not found".format(df.from_image))
+            raise FileNotFoundError("Image with name {} not found".format(dockerfile.from_image))
         print("Using parent image {}".format(parent_hash[:16]))
 
     #  Update build hashes based on base image
-    df.calc_build_hashes(parent_hash=parent_hash)
-    total_build_steps = len(df.build_commands)
+    dockerfile.calc_build_hashes(parent_hash=parent_hash)
+    total_build_steps = len(dockerfile.build_commands)
 
     #  Early exit if image is already built
-    if not args.no_cache and args.rm:
-        if (runtime / df.build_hashes[-1]).exists():
-            print("==> Already built {}".format(df.build_hashes[-1][:16]))
+    if cache and remove:
+        if (storage.runtime / dockerfile.build_hashes[-1]).exists():
+            print("==> Already built {}".format(dockerfile.build_hashes[-1][:16]))
             return
 
     #  Do the build
-    for current_build_step, (cmd, cmdargs) in enumerate(df.build_commands):
-        build_step_hash = df.build_hashes[current_build_step]
+    for current_build_step, (cmd, cmdargs) in enumerate(dockerfile.build_commands):
+        build_step_hash = dockerfile.build_hashes[current_build_step]
 
         print("==> Building step {}/{} {}".format(current_build_step + 1, total_build_steps, build_step_hash[:16]))
 
-        target = runtime / (build_step_hash + "-init")
-        final_target = runtime / build_step_hash
+        target = storage.runtime / (build_step_hash + "-init")
+        final_target = storage.runtime / build_step_hash
         host_env = {
             "TARGET": str(target),
-            "CONTEXT": str(context)
+            "CONTEXT": str(dockerfile.context)
         }
-        host_env.update(df.env)
+        host_env.update(dockerfile.env)
 
         ## parent image checks
         if final_target.exists():
-            if args.no_cache:
+            if not cache:
                 btrfs_subvol_delete(final_target)
             else:
-                previous_parent_hash = ""
-                try:
-                    previous_parent_hash = os.getxattr(str(final_target), b"user.parent_hash").decode()
-                except:
-                    pass
+                previous_parent_hash = storage.find_parent_hash(final_target)
                 if parent_hash and parent_hash != previous_parent_hash:
                     print("  -> parent image hash changed")
                     btrfs_subvol_delete(final_target)
@@ -245,22 +246,22 @@ def build(args):
             btrfs_subvol_delete(target)
 
         if parent_hash:
-            btrfs_subvol_snapshot(runtime / parent_hash, target)
+            btrfs_subvol_snapshot(storage.runtime / parent_hash, target)
         else:
             btrfs_subvol_create(target)
 
         ## Run build step
         if cmd == "host":
             print('  -> HOST {}'.format(cmdargs))
-            subprocess.run(cmdargs, cwd=str(context), check=True, shell=True, env=host_env)
+            subprocess.run(cmdargs, cwd=str(dockerfile.context), check=True, shell=True, env=host_env)
 
         elif cmd == "run":
             print('  -> RUN {}'.format(cmdargs))
             nspawn_cmd = nspawn_cmd_base.copy()
-            for key, val in df.env.items():
+            for key, val in dockerfile.env.items():
                 nspawn_cmd.extend(('--setenv', '{}={}'.format(key, val)))
             nspawn_cmd.extend(('--register=no', '-D', str(target), '/bin/sh', '-c', cmdargs))
-            subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=df.env)
+            subprocess.run(nspawn_cmd, cwd=str(target), check=True, shell=False, env=dockerfile.env)
 
         elif cmd == "copy":
             print("  -> COPY {}".format(cmdargs))
@@ -274,41 +275,52 @@ def build(args):
             cmd = ['cp', '-rv']
             cmd.extend(srcs)
             cmd.append(str(dest))
-            subprocess.run(cmd, cwd=str(context), check=True, shell=False, env=host_env)
+            subprocess.run(cmd, cwd=str(dockerfile.context), check=True, shell=False, env=host_env)
 
         ## Seal build image
-        os.setxattr(str(target), b"user.parent_hash", parent_hash.encode())
-        for attr in ("user.cmd.host", "user.cmd.run"):
-            try:
-                os.removexattr(str(target), attr.encode())
-            except:
-                pass
-        os.setxattr(str(target), "user.cmd.{}".format(cmd).encode(), cmdargs.encode())
-
-        btrfs_subvol_snapshot(target, final_target, readonly=True)
-        btrfs_subvol_delete(target)
-
+        r.seal_image(final_target, parent_hash, cmd, cmdargs)
         parent_hash = build_step_hash
 
     #  After build cleanup
-    if args.rm:
+    if remove:
         print("==> Cleanup")
-        for build_hash in df.build_hashes[:-1]:
-            target = runtime / build_hash
+        for build_hash in dockerfile.build_hashes[:-1]:
+            target = storage.runtime / build_hash
             if target.exists():
                 print("  -> Remove intermediate image {}".format(build_hash[:16]))
                 btrfs_subvol_delete(target)
 
     print("==> Successfully built {}".format(parent_hash[:16]))
 
-    if args.tag:
-        tmp_tag = runtime / ("tag-" + args.tag + "-tmp")
+    if tag:
+        tmp_tag = storage.runtime / ("tag-" + tag + "-tmp")
         if tmp_tag.exists():
             os.unlink(str(tmp_tag))
-        os.symlink(str(runtime / parent_hash), str(tmp_tag))
-        os.replace(str(tmp_tag), str(runtime / ("tag-" + args.tag)))
-        print("==> Tagged image {} as {}".format(parent_hash[:16], args.tag))
+        os.symlink(str(storage.runtime / parent_hash), str(tmp_tag))
+        os.replace(str(tmp_tag), str(storage.runtime / ("tag-" + tag)))
+        print("==> Tagged image {} as {}".format(parent_hash[:16], tag))
 
+
+def build_cli(args):
+    runtime = Path(args.runtime).resolve()
+    storage = ImageStorage(runtime)
+
+    context = Path(args.path).resolve()
+    dockerfile = Path(args.file)
+    if not dockerfile.is_absolute():
+        dockerfile = context / dockerfile
+    dockerfile = dockerfile.resolve()
+    if not dockerfile.is_file():
+        raise FileNotFoundError("{} does not exist".format(dockerfile))
+
+    dockerfile_parser = DockerfileParser(dockerfile)
+
+    if args.env:
+        dockerfile_parser.add_env_variables(args.env)
+
+    build(storage=storage, dockerfile=dockerfile_parser,
+          cache=not args.no_cache, remove=args.rm,
+          tag=args.tag)
 
 def export(args):
     runtime = Path(args.runtime).resolve()
@@ -478,7 +490,7 @@ def parseargs():
         action='store',
         metavar='PATH',
         help='context for the build')
-    build_parser.set_defaults(func=build)
+    build_parser.set_defaults(func=build_cli)
 
     # Export parser
     export_parser = subparsers.add_parser(
